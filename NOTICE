@@ -1,0 +1,16 @@
+opencode-manager-devcontainer
+
+This product is a derived work based on opencode-manager (https://github.com/chriswritescode-dev/opencode-manager), which is licensed under the MIT License.
+
+This product includes the devcontainers CLI (https://github.com/devcontainers/cli), licensed under the MIT License.
+
+This product installs the following third-party components within the container image:
+- Podman (Apache-2.0)
+- crun (GPL-2.0)
+- conmon (Apache-2.0)
+- netavark (Apache-2.0)
+- aardvark-dns (Apache-2.0)
+- passt (GPL-2.0)
+- fuse-overlayfs (GPL-3.0)
+- catatonit (GPL-2.0)
+- uidmap (GPL-2.0)
