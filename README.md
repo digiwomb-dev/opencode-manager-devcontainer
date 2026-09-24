@@ -1,14 +1,14 @@
-# OpenCode Manager mit Dev Container Support
+# OpenCode Manager with Dev Container Support
 
-Dieses Repository baut ein erweitertes Image des OpenCode-Managers (`opencode-manager`), das einen vollständigen rootless-Podman-Stack sowie die `devcontainer`-CLI integriert.
+This repository builds an extended image of the OpenCode Manager (`opencode-manager`) that integrates a full rootless Podman stack and the `devcontainer` CLI.
 
-## Wozu das Image da ist
+## Purpose
 
-Das Ziel ist es, Dev Container direkt *im* Manager-Container laufen zu lassen (Nested Containers), anstatt sie als Geschwister-Container über einen durchgereichten Docker-Socket auf dem Host-System zu starten. Das verbessert die Isolation und vermeidet die Notwendigkeit, den Docker-Socket in den Container durchzureichen.
+The goal is to run Dev Containers directly *inside* the Manager container (Nested Containers) rather than starting them as sibling containers on the host system via a mounted Docker socket. This improves isolation and removes the need to expose the Docker socket to the container.
 
-## Einbindung
+## Usage
 
-Das Image kann in einer `docker-compose.yml` wie folgt verwendet werden:
+The image can be used in a `docker-compose.yml` as follows:
 
 ```yaml
 services:
@@ -24,29 +24,29 @@ services:
       - opencode-containers:/home/node/.local/share/containers
 ```
 
-### Warum diese Compose-Optionen benötigt werden
+### Why these compose options are required
 
-- **`security_opt: unmask=ALL`**: Ohne diese Option scheitert jeder verschachtelte Container mit `VFS: Mount too revealing`. Podman muss ein frisches `procfs` mounten, was durch die maskierten `/proc`-Submounts des äußeren Containers verhindert wird. Diese Option hebt die Maskierung auf.
-- **`security_opt: seccomp=unconfined`**: Erlaubt dem Container, Systemaufrufe (Syscalls) durchzuführen, die für die Ausführung von verschachtelten Containern (z.B. durch `crun` und `podman`) notwendig sind.
-- **`devices: /dev/net/tun`**: Notwendig für das nested Netzwerk (netavark/pasta), um Netzwerk-Interfaces für die inneren Container zu erstellen.
-- **`devices: /dev/fuse`**: Wird als Storage-Fallback benötigt, falls das native unprivilegierte `overlayfs` nicht verfügbar ist.
-- **`volumes: /home/node/.local/share/containers`**: Zwingend erforderlich. Ein unprivilegiertes `overlayfs` direkt auf dem Container-Rootfs (overlay-auf-overlay) schlägt fehl. Das Mounten eines Volumes umgeht dieses Problem und ermöglicht performantes natives Overlay (funktioniert auf XFS).
-- **Kein Docker-Socket**: Der durchgereichte Docker-Socket entfällt komplett. Podman arbeitet daemonless; es wird weder ein Socket noch ein Hintergrund-Service benötigt.
+- **`security_opt: unmask=ALL`**: Without this option, every nested container fails with `VFS: Mount too revealing`. Podman needs to mount a fresh `procfs`, which is prevented by the masked `/proc` submounts of the outer container. This option removes the mask.
+- **`security_opt: seccomp=unconfined`**: Allows the container to execute system calls (syscalls) that are required to run nested containers (e.g., by `crun` and `podman`).
+- **`devices: /dev/net/tun`**: Required for the nested network (netavark/pasta) to create network interfaces for the inner containers.
+- **`devices: /dev/fuse`**: Required as a storage fallback in case native unprivileged `overlayfs` is unavailable.
+- **`volumes: /home/node/.local/share/containers`**: Mandatory. An unprivileged `overlayfs` directly on top of the container rootfs (overlay-on-overlay) will fail. Mounting a host volume bypasses this issue and allows for performant native overlay (works on XFS and Ext4).
+- **No Docker Socket**: Passing through the Docker socket is completely omitted. Podman operates daemonless; it requires neither a socket nor a background service.
 
-## Aufruf
+## Internal Execution
 
-Um einen Dev Container zu starten, verwendet der Manager intern folgenden Befehl:
+To start a Dev Container, the Manager internally uses the following command:
 
 ```bash
 devcontainer up --docker-path podman
 ```
 
-## Reproduzierbarkeit & Snapshot-Fallback
+## Reproducibility & Snapshot Fallback
 
-Um stabile und reproduzierbare Container-Builds zu garantieren, sind alle installierten Debian-Pakete auf exakte Versionen gepinnt. Da Debian im regulären Live-Archiv stets nur die aktuellste Version vorhält, nutzen wir bei der Installation einen **Snapshot-Fallback**:
-Es wird eine zweite `apt`-Quelle (`snapshot.debian.org`) mit einem definierten Zeitstempel (z.B. `20260918T000000Z`) eingebunden.
-So greift `apt-get` normalerweise auf das schnelle Live-Archiv zu. Sollte ein gepinntes Paket dort durch ein Update verschwunden sein, bedient sich `apt` nahtlos aus dem Snapshot. Nach der Installation wird die Snapshot-Quelle entfernt, um das fertige Image sauber zu halten.
+To guarantee stable and reproducible container builds, all installed Debian packages are pinned to exact versions. Since the regular live Debian archive only retains the latest versions, we use a **Snapshot Fallback** during installation:
+A secondary `apt` source (`snapshot.debian.org`) with a defined timestamp (e.g., `20260918T000000Z`) is configured.
+By default, `apt-get` accesses the fast live archive. If a pinned package is no longer available there due to an update, `apt` seamlessly falls back to the snapshot. After the installation, the snapshot source is removed to keep the final image clean.
 
-## Manueller Schritt nach dem ersten Push
+## Manual Step After the First Push
 
-Das GHCR-Paket (GitHub Container Registry) ist standardmäßig privat. Nach dem ersten erfolgreichen Push durch die GitHub Actions muss das Image in den Repository-Einstellungen auf **öffentlich (public)** gestellt werden.
+The GHCR (GitHub Container Registry) package is private by default. After the first successful push by GitHub Actions, the image must be manually set to **Public** in the repository settings.
