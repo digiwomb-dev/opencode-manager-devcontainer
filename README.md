@@ -47,6 +47,4 @@ To guarantee stable and reproducible container builds, all installed Debian pack
 A secondary `apt` source (`snapshot.debian.org`) with a defined timestamp (e.g., `20260918T000000Z`) is configured.
 By default, `apt-get` accesses the fast live archive. If a pinned package is no longer available there due to an update, `apt` seamlessly falls back to the snapshot. After the installation, the snapshot source is removed to keep the final image clean.
 
-## First-time Setup
 
-Packages published to the GitHub Container Registry (GHCR) are private by default. After the first successful build and push by GitHub Actions, navigate to the repository's package settings and change the image visibility to **Public** to allow unauthenticated pulls.
