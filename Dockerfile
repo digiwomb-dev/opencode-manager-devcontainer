@@ -15,7 +15,6 @@ Signed-By: /usr/share/keyrings/debian-archive-keyring.pgp" > /etc/apt/sources.li
     apt-get -o Acquire::Check-Valid-Until=false -o Acquire::Retries=3 -o Acquire::http::Timeout=60 update && \
     apt-get install -y --no-install-recommends \
         podman=5.4.2+ds1-2+b2 \
-        uidmap=1:4.17.4-2 \
         crun=1.21-1 \
         conmon=2.1.12-4 \
         netavark=1.14.0-2 \
@@ -25,6 +24,11 @@ Signed-By: /usr/share/keyrings/debian-archive-keyring.pgp" > /etc/apt/sources.li
         catatonit=0.2.1-2+b14 && \
     rm /etc/apt/sources.list.d/snapshot.sources && \
     rm -rf /var/lib/apt/lists/*
+
+# Empty subuid and subgid files to force podman into rootless Single-UID-Mapping mode.
+# Without this, podman attempts to use newuidmap (multi-range), which fails because
+# the entrypoint drops the required CAP_SETUID capability.
+RUN touch /etc/subuid /etc/subgid && > /etc/subuid && > /etc/subgid
 
 # Install devcontainers CLI
 RUN npm install -g @devcontainers/cli@0.89.0

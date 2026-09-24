@@ -41,6 +41,13 @@ To start a Dev Container, the Manager internally uses the following command:
 devcontainer up --docker-path podman
 ```
 
+## Security & Rootless Mode
+
+The image is optimized for a strictly nested rootless execution context without privileges like `CAP_SETUID`.
+The `uidmap` package has been explicitly excluded from this setup to minimize the attack surface by removing the setuid-root binaries `newuidmap`/`newgidmap`. Instead, Podman falls back entirely to standard rightless single-UID mappings.
+Files like `/etc/subuid` and `/etc/subgid` are kept empty intentionally to enforce this mapping behavior.
+To make this single-UID context work without permission errors during image extractions, `ignore_chown_errors = "true"` is set within the overlay storage configuration.
+
 ## Reproducibility & Snapshot Fallback
 
 To guarantee stable and reproducible container builds, all installed Debian packages are pinned to exact versions. Since the regular live Debian archive only retains the latest versions, we use a **Snapshot Fallback** during installation:

@@ -13,4 +13,3 @@ This product installs the following third-party components within the container 
 - passt (GPL-2.0)
 - fuse-overlayfs (GPL-3.0)
 - catatonit (GPL-2.0)
-- uidmap (GPL-2.0)
