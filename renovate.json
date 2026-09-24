@@ -1,0 +1,24 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended"
+  ],
+  "schedule": ["every day"],
+  "packageRules": [
+    {
+      "matchDatasources": ["deb"],
+      "registryUrls": ["https://deb.debian.org/debian?suite=trixie&components=main&binaryArch=arm64"]
+    }
+  ],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "fileMatch": ["(^|/)Dockerfile$"],
+      "matchStrings": [
+        "RUN npm install -g @devcontainers/cli@(?<currentValue>.*?)\\s"
+      ],
+      "depNameTemplate": "@devcontainers/cli",
+      "datasourceTemplate": "npm"
+    }
+  ]
+}
