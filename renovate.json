@@ -4,15 +4,14 @@
     "config:recommended",
     "schedule:daily"
   ],
-  "description": "Automerge is left to Renovate itself. A workflow using GITHUB_TOKEN cannot do it, because GITHUB_TOKEN has no `workflows` permission and nearly every update here touches .github/workflows, so GitHub disables auto-merge with 'Tried to create or update workflow without workflows permission'. The Renovate app does hold that permission.",
+  "description": "Renovate enables GitHub's native auto-merge, so a pull request merges once the required checks pass rather than only during a Renovate run. A workflow cannot do this: it would authenticate with GITHUB_TOKEN, which has no `workflows` permission, and nearly every update here touches .github/workflows, so GitHub would disable auto-merge again with 'Tried to create or update workflow without workflows permission'. The Renovate app does hold that permission.",
   "automerge": true,
   "automergeType": "pr",
   "automergeStrategy": "squash",
-  "platformAutomerge": false,
   "packageRules": [
     {
-      "description": "Hold major updates back for review; they are the ones likely to need a code change alongside.",
-      "matchUpdateTypes": ["major"],
+      "description": "actions/github-script is only used by the cleanup and verify workflows, which are scheduled and therefore never run on a pull request. An update to it cannot be validated before merging, and the cleanup deletes package versions, so it stays manual.",
+      "matchPackageNames": ["actions/github-script"],
       "automerge": false
     },
     {
