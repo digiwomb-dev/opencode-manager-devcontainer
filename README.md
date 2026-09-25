@@ -13,7 +13,7 @@ The image can be used in a `docker-compose.yml` as follows:
 ```yaml
 services:
   opencode-manager:
-    image: ghcr.io/digiwomb-dev/opencode-manager-devcontainer:1.0.17
+    image: ghcr.io/digiwomb-dev/opencode-manager-devcontainer:0.18.0-18
     security_opt:
       - unmask=ALL
       - seccomp=unconfined
@@ -26,37 +26,35 @@ services:
 
 ### Image tags
 
-This image has its own SemVer line, independent of the upstream base image
-version. The upstream version cannot identify a build here, because this
-repository adds its own package pins on top, so several different builds would
-share one upstream version.
-
-`MAJOR.MINOR` comes from the `VERSION` file and is bumped by hand. `PATCH` is the
-commit count, so every commit yields a distinct, correctly sorting version.
+The version tracks the upstream `opencode-manager` release this image is built
+on. That alone does not identify a build, because this repository adds its own
+package pins on top and so produces several builds per upstream release, hence
+the trailing build number.
 
 | Tag | Example | Stability |
 | --- | --- | --- |
-| `<major>.<minor>.<patch>` | `1.0.17` | **Immutable.** Never reassigned. Use this to pin. |
+| `<upstream>-<build>` | `0.18.0-18` | **Immutable.** Never reassigned. Use this to pin. |
 | `sha-<commit>` | `sha-1f0dc1e…` | **Immutable.** Same image, addressed by commit. |
-| `<major>.<minor>` | `1.0` | Moving. Latest patch of that minor line. |
-| `<major>` | `1` | Moving. Latest release of that major line. |
-| `latest` | `latest` | Moving. Latest build overall. |
+| `<upstream>` | `0.18.0` | Moving. Newest build for that upstream release. |
+| `latest` | `latest` | Moving. Newest build overall. |
 
 Pin an immutable tag for anything you depend on. The moving tags are convenience
 pointers and will silently change underneath you when a new build is published.
 If you want byte-exact reproducibility, pin the digest (`@sha256:…`), which the
 immutable tags resolve to anyway.
 
-The upstream release an image was built on is recorded in its
-`org.opencontainers.image.base.name` label:
+The build number is the commit count, so it keeps increasing across upstream
+bumps (`0.18.0-18` is followed by `0.19.0-19`) and never repeats. It is kept
+purely numeric because semver compares numeric prerelease identifiers
+numerically, whereas alphanumeric ones compare as strings and would sort `-9`
+above `-16`.
 
-```bash
-docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.base.name"}}' \
-  ghcr.io/digiwomb-dev/opencode-manager-devcontainer:1.0.17
-```
+Note that `0.18.0-18` therefore sorts *below* `0.18.0` under strict semver, as
+prerelease identifiers do. The tags are ordered correctly among themselves,
+which is what matters for picking a build.
 
-Older builds used `<upstream>-b<build>` tags such as `0.18.0-b16`. Those remain
-valid and immutable, but new builds use the scheme above.
+A handful of early builds used `0.18.0-b14` through `0.18.0-b16`. Those remain
+valid and immutable, but are superseded by the scheme above.
 
 ### Why these compose options are required
 

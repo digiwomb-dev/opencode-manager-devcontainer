@@ -18,9 +18,8 @@ jobs:
       contents: read
     outputs:
       version: ${{ steps.v.outputs.version }}
-      minor: ${{ steps.v.outputs.minor }}
-      major: ${{ steps.v.outputs.major }}
       base: ${{ steps.v.outputs.base }}
+      build: ${{ steps.v.outputs.build }}
       sha: ${{ steps.v.outputs.sha }}
       snapshot_ts: ${{ steps.v.outputs.snapshot_ts }}
     steps:
@@ -35,31 +34,23 @@ jobs:
           SHA: ${{ github.sha }}
           TZ: UTC
         run: |
-          # This image has its own version line, independent of the upstream base
-          # image. The upstream version is not a usable identity here because this
-          # repository adds its own package pins on top, so several different
-          # builds would share one upstream version. Encoding it as a prerelease
-          # (0.18.0-b16) would also sort *below* 0.18.0 and drop out of ranges
-          # like ">0.18.0", which is the opposite of what we mean.
-          #
-          # MAJOR.MINOR comes from the VERSION file and is bumped by hand for
-          # meaningful changes. PATCH is the commit count, which is strictly
-          # monotonic over the history, so every commit gets a distinct version
-          # that sorts correctly and is never reused.
-          MM=$(tr -d ' \t\n\r' < VERSION)
-          case "$MM" in
-            [0-9]*.[0-9]*) ;;
-            *) echo "::error::VERSION must contain MAJOR.MINOR, got '$MM'" >&2; exit 1 ;;
-          esac
-          PATCH=$(git rev-list --count HEAD)
-
-          # Track the upstream version too, so the published image records which
-          # base it was built on even though it does not drive our version.
+          # The version tracks the upstream opencode-manager release this image
+          # is built on. That alone is not a unique identity, because this
+          # repository adds its own package pins on top and so produces several
+          # builds per upstream release, so append a build number.
           BASE=$(sed -n 's|^FROM .*/opencode-manager:\([^@[:space:]]*\).*|\1|p' Dockerfile)
           if [ -z "$BASE" ]; then
             echo "::error::Could not derive base image version from Dockerfile" >&2
             exit 1
           fi
+
+          # The build number is the commit count: strictly monotonic over the
+          # history, so it stays unique even if the upstream version rolls back
+          # to one used earlier. It is kept purely numeric on purpose, because
+          # semver compares numeric prerelease identifiers numerically while
+          # alphanumeric ones compare as strings, which would sort -9 above -16.
+          BUILD=$(git rev-list --count HEAD)
+          VERSION="${BASE}-${BUILD}"
 
           # Derive the Debian snapshot timestamp from the commit date rather than
           # storing it in the Dockerfile. This guarantees the snapshot always
@@ -68,16 +59,16 @@ jobs:
           TS=$(git show -s --format=%cd --date=format-local:%Y%m%dT%H%M%SZ HEAD)
 
           {
-            echo "version=${MM}.${PATCH}"
-            echo "minor=${MM}"
-            echo "major=${MM%%.*}"
+            echo "version=$VERSION"
             echo "base=$BASE"
+            echo "build=$BUILD"
             echo "sha=sha-${SHA}"
             echo "snapshot_ts=$TS"
           } >> "$GITHUB_OUTPUT"
 
-          echo "Version:   ${MM}.${PATCH}   (upstream base ${BASE})"
-          echo "Snapshot:  ${TS}"
+          echo "Immutable: $VERSION / sha-${SHA}"
+          echo "Moving:    $BASE, latest"
+          echo "Snapshot:  $TS"
 
   build:
     name: Build ${{ matrix.arch }}
@@ -203,8 +194,7 @@ jobs:
         working-directory: /tmp/digests
         env:
           VERSION: ${{ needs.version.outputs.version }}
-          MINOR: ${{ needs.version.outputs.minor }}
-          MAJOR: ${{ needs.version.outputs.major }}
+          BASE: ${{ needs.version.outputs.base }}
           SHA_TAG: ${{ needs.version.outputs.sha }}
         run: |
           # The first two tags are immutable and safe to pin; the rest are
@@ -212,16 +202,13 @@ jobs:
           docker buildx imagetools create \
             -t "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${VERSION}" \
             -t "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${SHA_TAG}" \
-            -t "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${MINOR}" \
-            -t "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${MAJOR}" \
+            -t "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${BASE}" \
             -t "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest" \
             $(printf '${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@sha256:%s ' *)
 
       - name: Summarise published tags
         env:
           VERSION: ${{ needs.version.outputs.version }}
-          MINOR: ${{ needs.version.outputs.minor }}
-          MAJOR: ${{ needs.version.outputs.major }}
           BASE: ${{ needs.version.outputs.base }}
           SHA_TAG: ${{ needs.version.outputs.sha }}
         run: |
@@ -229,13 +216,10 @@ jobs:
           {
             echo "### Published tags"
             echo
-            echo "Built on upstream \`opencode-manager:${BASE}\`."
-            echo
             echo "| Tag | Stability |"
             echo "| --- | --- |"
             echo "| \`${IMAGE}:${VERSION}\` | immutable, safe to pin |"
             echo "| \`${IMAGE}:${SHA_TAG}\` | immutable, safe to pin |"
-            echo "| \`${IMAGE}:${MINOR}\` | moving |"
-            echo "| \`${IMAGE}:${MAJOR}\` | moving |"
+            echo "| \`${IMAGE}:${BASE}\` | moving, newest build for this upstream release |"
             echo "| \`${IMAGE}:latest\` | moving |"
           } >> "$GITHUB_STEP_SUMMARY"
