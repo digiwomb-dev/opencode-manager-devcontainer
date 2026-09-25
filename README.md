@@ -51,8 +51,10 @@ To make this single-UID context work without permission errors during image extr
 ## Reproducibility & Snapshot Fallback
 
 To guarantee stable and reproducible container builds, all installed Debian packages are pinned to exact versions. Since the regular live Debian archive only retains the latest versions, we use a **Snapshot Fallback** during installation:
-A secondary `apt` source (`snapshot.debian.org`) with a defined timestamp (e.g., `20260918T000000Z`) is configured.
+A secondary `apt` source (`snapshot.debian.org`) with a defined timestamp is configured.
 By default, `apt-get` accesses the fast live archive. If a pinned package is no longer available there due to an update, `apt` seamlessly falls back to the snapshot. After the installation, the snapshot source is removed to keep the final image clean.
+
+The timestamp is supplied by the build workflow from the commit date, so it always matches or follows the package versions pinned in that same commit. The `SNAPSHOT_TS` default in the Dockerfile is only a fallback for local builds.
 
 ## Migration Note: Storage Location Change
 

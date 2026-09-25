@@ -44,11 +44,18 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract SNAPSHOT_TS from Dockerfile
+      - name: Derive snapshot timestamp from commit
         id: extract
         run: |
-          TS=$(awk -F= '/^ARG SNAPSHOT_TS=/ {print $2}' Dockerfile)
+          # Derive the Debian snapshot timestamp from the commit date rather than
+          # storing it in the Dockerfile. This guarantees the snapshot always
+          # matches or follows the pinned package versions in the same commit,
+          # including for Renovate bumps, without a bot rewriting the branch.
+          TS=$(git show -s --format=%cd --date=format-local:%Y%m%dT%H%M%SZ HEAD)
           echo "ts=$TS" >> "$GITHUB_OUTPUT"
+          echo "Using snapshot timestamp $TS"
+        env:
+          TZ: UTC
 
       - name: Build and push by digest
         id: build
@@ -86,6 +93,23 @@ jobs:
       packages: write
     
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Derive image tag from base image
+        id: tag
+        run: |
+          # Derive the published tag from the pinned base image tag so that a
+          # Renovate base image bump also moves the tag we publish under,
+          # instead of silently republishing an old version number.
+          TAG=$(sed -n 's|^FROM .*/opencode-manager:\([^@[:space:]]*\).*|\1|p' Dockerfile)
+          if [ -z "$TAG" ]; then
+            echo "::error::Could not derive tag from base image in Dockerfile" >&2
+            exit 1
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "Publishing as $TAG"
+
       - name: Setup Docker Buildx
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
@@ -105,6 +129,10 @@ jobs:
           
       - name: Create manifest list and push
         working-directory: /tmp/digests
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
         run: |
-          docker buildx imagetools create -t ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:0.18.0 -t ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest \
+          docker buildx imagetools create \
+            -t "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${TAG}" \
+            -t "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest" \
             $(printf '${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@sha256:%s ' *)

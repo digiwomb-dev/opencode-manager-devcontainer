@@ -1,19 +1,23 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": [
-    "config:recommended"
+    "config:recommended",
+    "schedule:daily"
   ],
-  "schedule": ["every day"],
   "packageRules": [
     {
+      "description": "The dockerfile manager extracts the apt pins but cannot infer a registry from the base image, so point deb lookups at the suite and components that the Dockerfile actually configures. binaryArch is amd64 because multiple registryUrls would be merged as a union rather than an intersection, which would weaken the check; the multi-arch build is what guards against an arch-specific binNMU.",
       "matchDatasources": ["deb"],
-      "registryUrls": ["https://deb.debian.org/debian?suite=trixie&components=main&binaryArch=arm64"]
+      "registryUrls": [
+        "https://deb.debian.org/debian?suite=trixie&components=main&binaryArch=amd64"
+      ]
     }
   ],
   "customManagers": [
     {
+      "description": "npm install -g is not covered by a built-in manager.",
       "customType": "regex",
-      "fileMatch": ["(^|/)Dockerfile$"],
+      "managerFilePatterns": ["/(^|/)Dockerfile$/"],
       "matchStrings": [
         "RUN npm install -g @devcontainers/cli@(?<currentValue>.*?)\\s"
       ],

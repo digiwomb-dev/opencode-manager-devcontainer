@@ -1,10 +1,14 @@
-# Base: ghcr.io/chriswritescode-dev/opencode-manager:0.18.0
-# Pinned by Manifest-List-Digest for multi-arch support
-FROM ghcr.io/chriswritescode-dev/opencode-manager@sha256:b3f1963af2bd8d19aa9920bfe7f3f69021116853f690a3b3cc63536734419e00
+# Pinned by Manifest-List-Digest for multi-arch support.
+# The tag is kept alongside the digest so that Renovate tracks this specific
+# release line, and so that the publish workflow can derive its output tag from
+# it. Without the tag, Renovate would implicitly track `latest`.
+FROM ghcr.io/chriswritescode-dev/opencode-manager:0.18.0@sha256:b3f1963af2bd8d19aa9920bfe7f3f69021116853f690a3b3cc63536734419e00
 
-# Snapshot fallback timestamp for Debian packages
-# Ensure snapshot timestamp matches or follows pinned package versions
-ARG SNAPSHOT_TS=20260918T000000Z
+# Snapshot fallback timestamp for Debian packages.
+# Must match or follow the pinned package versions, otherwise the snapshot
+# would not contain them and the fallback would be useless. The build workflow
+# passes the commit timestamp, so a Renovate bump and its snapshot always agree.
+ARG SNAPSHOT_TS=20260925T053018Z
 
 # Install Podman stack using precise package pins and a snapshot fallback
 RUN echo "Types: deb\n\

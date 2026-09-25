@@ -6,7 +6,9 @@ on:
 
 jobs:
   automerge:
-    if: github.actor == 'renovate[bot]' || github.actor == 'renovate'
+    # Keyed on the PR author rather than github.actor, because github.actor is
+    # whoever triggered the event and so does not stay Renovate across reruns.
+    if: github.event.pull_request.user.login == 'renovate[bot]'
     runs-on: ubuntu-24.04
     permissions:
       pull-requests: write
