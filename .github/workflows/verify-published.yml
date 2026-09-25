@@ -1,0 +1,83 @@
+name: Verify Head Is Published
+
+on:
+  schedule:
+    - cron: '43 5 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: verify-published
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Check head has an image
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Build or verify the image for head
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
+        env:
+          IMAGE: ghcr.io/digiwomb-dev/opencode-manager-devcontainer
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            // A commit can land on main without triggering a build. That happened
+            // once already: a pull request merged by a workflow using
+            // GITHUB_TOKEN produces a push that starts no new workflow run, so
+            // build 21 never existed. Catch that here and dispatch the build,
+            // rather than discovering the gap much later.
+            const { owner, repo } = context.repo;
+            const image = process.env.IMAGE;
+
+            const sha = await exec.getExecOutput('git', ['rev-parse', 'HEAD']);
+            const head = sha.stdout.trim();
+            const tag = `sha-${head}`;
+
+            const tokenRes = await fetch(
+              `https://ghcr.io/token?scope=repository:${owner}/${repo}:pull&service=ghcr.io`,
+            );
+            if (!tokenRes.ok) {
+              throw new Error(`Could not obtain a registry token: ${tokenRes.status}`);
+            }
+            const { token } = await tokenRes.json();
+
+            const res = await fetch(`https://ghcr.io/v2/${owner}/${repo}/manifests/${tag}`, {
+              method: 'HEAD',
+              headers: {
+                Authorization: `Bearer ${token}`,
+                Accept: [
+                  'application/vnd.oci.image.index.v1+json',
+                  'application/vnd.docker.distribution.manifest.list.v2+json',
+                ].join(','),
+              },
+            });
+
+            if (res.ok) {
+              core.info(`${image}:${tag} is published.`);
+              await core.summary
+                .addRaw(`Head \`${head.slice(0, 8)}\` is published as \`${tag}\`.`)
+                .write();
+              return;
+            }
+            if (res.status !== 404) {
+              throw new Error(`Unexpected status checking ${tag}: ${res.status}`);
+            }
+
+            core.warning(`No image for head ${head}; dispatching a build.`);
+            await github.rest.actions.createWorkflowDispatch({
+              owner, repo, workflow_id: 'build.yml', ref: context.ref,
+            });
+            await core.summary
+              .addRaw(`Head \`${head.slice(0, 8)}\` had no image. Dispatched a build.`)
+              .write();
