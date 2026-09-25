@@ -9,10 +9,6 @@ on:
         description: 'List what would be deleted without deleting it'
         type: boolean
         default: true
-      delete_tags:
-        description: 'Also delete these tags (comma separated). Use to retire a tag scheme.'
-        type: string
-        default: ''
 
 concurrency:
   group: cleanup-packages
@@ -62,7 +58,6 @@ jobs:
           # Scheduled runs delete; manual runs default to a dry run so the
           # effect can be reviewed before anything is removed.
           DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || 'false' }}
-          DELETE_TAGS: ${{ inputs.delete_tags }}
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
@@ -70,61 +65,26 @@ jobs:
             const org = context.repo.owner;
             const dryRun = process.env.DRY_RUN === 'true';
 
+            // Tagged versions are the published history of this image and are
+            // never deleted here, not even behind an opt-in flag: a tag that can
+            // disappear is not something anyone can pin. Only untagged versions
+            // are candidates, and of those only the ones nothing points at.
+            //
             // Every multi-arch tag is an index that references per-platform
             // manifests, and those manifests carry no tag of their own. Deleting
             // untagged versions indiscriminately would therefore destroy the
-            // platform layers out from under the tags, including the immutable
-            // ones. So first walk every tagged index and collect the digests it
-            // points at; only versions outside that set may be removed.
+            // platform layers out from under the tags. So first walk every
+            // tagged index and collect the digests it points at; only versions
+            // outside that set may be removed.
             const versions = await github.paginate(
               github.rest.packages.getAllPackageVersionsForPackageOwnedByOrg,
               { package_type: 'container', package_name: pkg, org, per_page: 100 },
             );
             core.info(`Found ${versions.length} package versions.`);
 
-            // Optionally retire explicitly named tags first, so that the
-            // versions they hold are then treated like any other untagged one.
-            const retire = (process.env.DELETE_TAGS ?? '')
-              .split(',').map(s => s.trim()).filter(Boolean);
-            const retired = [];
-            if (retire.length > 0) {
-              core.info(`Retiring tags: ${retire.join(', ')}`);
-              for (const v of versions) {
-                const tags = v.metadata?.container?.tags ?? [];
-                if (!tags.some(t => retire.includes(t))) continue;
-                // Only safe when every tag on the version is being retired,
-                // otherwise deleting it would take the other tags with it.
-                const remaining = tags.filter(t => !retire.includes(t));
-                if (remaining.length > 0) {
-                  core.warning(
-                    `Skipping ${v.name}: tags ${remaining.join(', ')} would be removed too.`,
-                  );
-                  continue;
-                }
-                if (dryRun) {
-                  core.info(`Would retire ${tags.join(', ')}`);
-                } else {
-                  await github.rest.packages.deletePackageVersionForOrg({
-                    package_type: 'container', package_name: pkg, org, package_version_id: v.id,
-                  });
-                  core.info(`Retired ${tags.join(', ')}`);
-                }
-                retired.push(...tags);
-              }
-            }
-
-            const retiredIds = new Set();
-            if (!dryRun && retired.length > 0) {
-              for (const v of versions) {
-                const tags = v.metadata?.container?.tags ?? [];
-                if (tags.length > 0 && tags.every(t => retire.includes(t))) retiredIds.add(v.id);
-              }
-            }
-            const live = versions.filter(v => !retiredIds.has(v.id));
-
-            const tagged = live.filter(v => (v.metadata?.container?.tags ?? []).length > 0);
-            const untagged = live.filter(v => (v.metadata?.container?.tags ?? []).length === 0);
-            core.info(`${tagged.length} tagged, ${untagged.length} untagged.`);
+            const tagged = versions.filter(v => (v.metadata?.container?.tags ?? []).length > 0);
+            const untagged = versions.filter(v => (v.metadata?.container?.tags ?? []).length === 0);
+            core.info(`${tagged.length} tagged (always kept), ${untagged.length} untagged.`);
 
             // Read the manifests through the registry API. A token scoped to
             // pull is required even for public packages.
@@ -192,6 +152,15 @@ jobs:
 
             let deleted = 0;
             for (const v of deletable) {
+              // Last line of defence, independent of how `deletable` was built:
+              // never issue a delete for something that carries a tag or that a
+              // tagged index points at.
+              const tags = v.metadata?.container?.tags ?? [];
+              if (tags.length > 0 || referenced.has(v.name)) {
+                throw new Error(
+                  `Refusing to delete ${v.name}: it is tagged or referenced. This is a bug.`,
+                );
+              }
               if (dryRun) {
                 core.info(`Would delete ${v.name}`);
                 continue;
