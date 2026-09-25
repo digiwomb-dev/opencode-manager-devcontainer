@@ -4,7 +4,17 @@
     "config:recommended",
     "schedule:daily"
   ],
+  "description": "Automerge is left to Renovate itself. A workflow using GITHUB_TOKEN cannot do it, because GITHUB_TOKEN has no `workflows` permission and nearly every update here touches .github/workflows, so GitHub disables auto-merge with 'Tried to create or update workflow without workflows permission'. The Renovate app does hold that permission.",
+  "automerge": true,
+  "automergeType": "pr",
+  "automergeStrategy": "squash",
+  "platformAutomerge": false,
   "packageRules": [
+    {
+      "description": "Hold major updates back for review; they are the ones likely to need a code change alongside.",
+      "matchUpdateTypes": ["major"],
+      "automerge": false
+    },
     {
       "description": "The dockerfile manager extracts the apt pins but cannot infer a registry from the base image, so point deb lookups at the suite and components that the Dockerfile actually configures. binaryArch is amd64 because multiple registryUrls would be merged as a union rather than an intersection, which would weaken the check; the multi-arch build is what guards against an arch-specific binNMU.",
       "matchDatasources": ["deb"],
