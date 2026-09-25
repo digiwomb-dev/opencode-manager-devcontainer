@@ -41,3 +41,13 @@ RUN npm install -g @devcontainers/cli@0.89.0
 COPY containers.conf /etc/containers/containers.conf
 COPY storage.conf /etc/containers/storage.conf
 COPY registries.conf /etc/containers/registries.conf
+
+# This image carries its own version line, so record which upstream release it
+# was built on. Supplied by the build workflow.
+ARG IMAGE_VERSION
+ARG UPSTREAM_VERSION
+ARG REVISION
+LABEL org.opencontainers.image.version="${IMAGE_VERSION}" \
+      org.opencontainers.image.revision="${REVISION}" \
+      org.opencontainers.image.base.name="ghcr.io/chriswritescode-dev/opencode-manager:${UPSTREAM_VERSION}" \
+      org.opencontainers.image.source="https://github.com/digiwomb-dev/opencode-manager-devcontainer"

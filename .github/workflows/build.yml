@@ -11,9 +11,78 @@ env:
   IMAGE_NAME: digiwomb-dev/opencode-manager-devcontainer
 
 jobs:
+  version:
+    name: Resolve Version
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      minor: ${{ steps.v.outputs.minor }}
+      major: ${{ steps.v.outputs.major }}
+      base: ${{ steps.v.outputs.base }}
+      sha: ${{ steps.v.outputs.sha }}
+      snapshot_ts: ${{ steps.v.outputs.snapshot_ts }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve version and snapshot timestamp
+        id: v
+        env:
+          SHA: ${{ github.sha }}
+          TZ: UTC
+        run: |
+          # This image has its own version line, independent of the upstream base
+          # image. The upstream version is not a usable identity here because this
+          # repository adds its own package pins on top, so several different
+          # builds would share one upstream version. Encoding it as a prerelease
+          # (0.18.0-b16) would also sort *below* 0.18.0 and drop out of ranges
+          # like ">0.18.0", which is the opposite of what we mean.
+          #
+          # MAJOR.MINOR comes from the VERSION file and is bumped by hand for
+          # meaningful changes. PATCH is the commit count, which is strictly
+          # monotonic over the history, so every commit gets a distinct version
+          # that sorts correctly and is never reused.
+          MM=$(tr -d ' \t\n\r' < VERSION)
+          case "$MM" in
+            [0-9]*.[0-9]*) ;;
+            *) echo "::error::VERSION must contain MAJOR.MINOR, got '$MM'" >&2; exit 1 ;;
+          esac
+          PATCH=$(git rev-list --count HEAD)
+
+          # Track the upstream version too, so the published image records which
+          # base it was built on even though it does not drive our version.
+          BASE=$(sed -n 's|^FROM .*/opencode-manager:\([^@[:space:]]*\).*|\1|p' Dockerfile)
+          if [ -z "$BASE" ]; then
+            echo "::error::Could not derive base image version from Dockerfile" >&2
+            exit 1
+          fi
+
+          # Derive the Debian snapshot timestamp from the commit date rather than
+          # storing it in the Dockerfile. This guarantees the snapshot always
+          # matches or follows the pinned package versions in the same commit,
+          # including for Renovate bumps, without a bot rewriting the branch.
+          TS=$(git show -s --format=%cd --date=format-local:%Y%m%dT%H%M%SZ HEAD)
+
+          {
+            echo "version=${MM}.${PATCH}"
+            echo "minor=${MM}"
+            echo "major=${MM%%.*}"
+            echo "base=$BASE"
+            echo "sha=sha-${SHA}"
+            echo "snapshot_ts=$TS"
+          } >> "$GITHUB_OUTPUT"
+
+          echo "Version:   ${MM}.${PATCH}   (upstream base ${BASE})"
+          echo "Snapshot:  ${TS}"
+
   build:
     name: Build ${{ matrix.arch }}
     runs-on: ${{ matrix.runner }}
+    needs: version
     strategy:
       fail-fast: false
       matrix:
@@ -44,19 +113,6 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Derive snapshot timestamp from commit
-        id: extract
-        run: |
-          # Derive the Debian snapshot timestamp from the commit date rather than
-          # storing it in the Dockerfile. This guarantees the snapshot always
-          # matches or follows the pinned package versions in the same commit,
-          # including for Renovate bumps, without a bot rewriting the branch.
-          TS=$(git show -s --format=%cd --date=format-local:%Y%m%dT%H%M%SZ HEAD)
-          echo "ts=$TS" >> "$GITHUB_OUTPUT"
-          echo "Using snapshot timestamp $TS"
-        env:
-          TZ: UTC
-
       - name: Build and push by digest
         id: build
         uses: docker/build-push-action@4f58ea79222b3b9dc2c8bbdd6debcef730109a75 # v6.9.0
@@ -64,7 +120,10 @@ jobs:
           context: .
           platforms: ${{ matrix.platform }}
           build-args: |
-            SNAPSHOT_TS=${{ steps.extract.outputs.ts }}
+            SNAPSHOT_TS=${{ needs.version.outputs.snapshot_ts }}
+            IMAGE_VERSION=${{ needs.version.outputs.version }}
+            UPSTREAM_VERSION=${{ needs.version.outputs.base }}
+            REVISION=${{ github.sha }}
           outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=${{ github.event_name != 'pull_request' }}
 
       - name: Export digest
@@ -86,50 +145,13 @@ jobs:
   manifest:
     name: Create Manifest List
     runs-on: ubuntu-24.04
-    needs: build
+    needs: [version, build]
     if: github.event_name != 'pull_request'
     permissions:
       contents: read
       packages: write
     
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          fetch-depth: 0
-
-      - name: Derive image tags
-        id: tag
-        env:
-          SHA: ${{ github.sha }}
-        run: |
-          # Derive the release line from the pinned base image tag so that a
-          # Renovate base image bump also moves the tag we publish under,
-          # instead of silently republishing an old version number.
-          BASE=$(sed -n 's|^FROM .*/opencode-manager:\([^@[:space:]]*\).*|\1|p' Dockerfile)
-          if [ -z "$BASE" ]; then
-            echo "::error::Could not derive tag from base image in Dockerfile" >&2
-            exit 1
-          fi
-
-          # The base version alone is not a unique identity for this image: this
-          # repository adds its own package pins on top, so several different
-          # builds can share one base version. Append the commit count, which is
-          # strictly monotonic over the history and therefore unique per commit,
-          # even across a rollback to a previously used base version. This yields
-          # a tag that is never reused and can be pinned safely.
-          BUILD=$(git rev-list --count HEAD)
-          IMMUTABLE="${BASE}-b${BUILD}"
-
-          {
-            echo "base=$BASE"
-            echo "immutable=$IMMUTABLE"
-            echo "sha=sha-${SHA}"
-          } >> "$GITHUB_OUTPUT"
-
-          echo "Immutable: $IMMUTABLE / sha-${SHA}"
-          echo "Moving:    $BASE, latest"
-
       - name: Log in to the Container registry
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
@@ -149,64 +171,71 @@ jobs:
 
       - name: Verify immutable tag is not taken by a different commit
         env:
-          IMMUTABLE: ${{ steps.tag.outputs.immutable }}
-          SHA_TAG: ${{ steps.tag.outputs.sha }}
+          VERSION: ${{ needs.version.outputs.version }}
+          SHA_TAG: ${{ needs.version.outputs.sha }}
         run: |
           # An immutable tag is only a guarantee if it never points at a
           # different commit's build. Every build also publishes a sha-<commit>
-          # tag, so if the revision tag already exists we can tell the two cases
+          # tag, so if the version tag already exists we can tell the two cases
           # apart: pointing at the same content as this commit's sha tag means a
           # workflow re-run, which is safe to repeat. Anything else means the
-          # revision number got reused by a different commit, which would break
+          # patch number got reused by a different commit, which would break
           # whoever already pinned it.
           IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}"
-          existing=$(docker buildx imagetools inspect --raw "${IMAGE}:${IMMUTABLE}" 2>/dev/null \
+          existing=$(docker buildx imagetools inspect --raw "${IMAGE}:${VERSION}" 2>/dev/null \
             | sha256sum | cut -d' ' -f1) || existing=""
           if [ -z "$existing" ]; then
-            echo "Tag ${IMMUTABLE} is free."
+            echo "Tag ${VERSION} is free."
             exit 0
           fi
           mine=$(docker buildx imagetools inspect --raw "${IMAGE}:${SHA_TAG}" 2>/dev/null \
             | sha256sum | cut -d' ' -f1) || mine=""
           if [ -n "$mine" ] && [ "$existing" = "$mine" ]; then
-            echo "Tag ${IMMUTABLE} already points at this commit's build; re-run is safe."
+            echo "Tag ${VERSION} already points at this commit's build; re-run is safe."
           else
-            echo "::error::Tag ${IMMUTABLE} already exists for a different commit." >&2
+            echo "::error::Tag ${VERSION} already exists for a different commit." >&2
             echo "::error::Refusing to overwrite an immutable tag. This usually means" >&2
-            echo "::error::the history was rewritten, so the revision number repeated." >&2
+            echo "::error::the history was rewritten, so the commit count repeated." >&2
             exit 1
           fi
 
       - name: Create manifest list and push
         working-directory: /tmp/digests
         env:
-          BASE: ${{ steps.tag.outputs.base }}
-          IMMUTABLE: ${{ steps.tag.outputs.immutable }}
-          SHA_TAG: ${{ steps.tag.outputs.sha }}
+          VERSION: ${{ needs.version.outputs.version }}
+          MINOR: ${{ needs.version.outputs.minor }}
+          MAJOR: ${{ needs.version.outputs.major }}
+          SHA_TAG: ${{ needs.version.outputs.sha }}
         run: |
-          # The first two tags are immutable and safe to pin; the last two are
-          # moving pointers to the newest build of this release line.
+          # The first two tags are immutable and safe to pin; the rest are
+          # moving pointers to the newest build of their respective line.
           docker buildx imagetools create \
-            -t "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${IMMUTABLE}" \
+            -t "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${VERSION}" \
             -t "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${SHA_TAG}" \
-            -t "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${BASE}" \
+            -t "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${MINOR}" \
+            -t "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${MAJOR}" \
             -t "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest" \
             $(printf '${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@sha256:%s ' *)
 
       - name: Summarise published tags
         env:
-          BASE: ${{ steps.tag.outputs.base }}
-          IMMUTABLE: ${{ steps.tag.outputs.immutable }}
-          SHA_TAG: ${{ steps.tag.outputs.sha }}
+          VERSION: ${{ needs.version.outputs.version }}
+          MINOR: ${{ needs.version.outputs.minor }}
+          MAJOR: ${{ needs.version.outputs.major }}
+          BASE: ${{ needs.version.outputs.base }}
+          SHA_TAG: ${{ needs.version.outputs.sha }}
         run: |
           IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}"
           {
             echo "### Published tags"
             echo
+            echo "Built on upstream \`opencode-manager:${BASE}\`."
+            echo
             echo "| Tag | Stability |"
             echo "| --- | --- |"
-            echo "| \`${IMAGE}:${IMMUTABLE}\` | immutable, safe to pin |"
+            echo "| \`${IMAGE}:${VERSION}\` | immutable, safe to pin |"
             echo "| \`${IMAGE}:${SHA_TAG}\` | immutable, safe to pin |"
-            echo "| \`${IMAGE}:${BASE}\` | moving |"
+            echo "| \`${IMAGE}:${MINOR}\` | moving |"
+            echo "| \`${IMAGE}:${MAJOR}\` | moving |"
             echo "| \`${IMAGE}:latest\` | moving |"
           } >> "$GITHUB_STEP_SUMMARY"

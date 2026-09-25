@@ -1,0 +1,139 @@
+name: Cleanup Untagged Images
+
+on:
+  schedule:
+    - cron: '17 4 * * 0'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'List what would be deleted without deleting it'
+        type: boolean
+        default: true
+
+concurrency:
+  group: cleanup-packages
+  cancel-in-progress: false
+
+jobs:
+  cleanup:
+    name: Delete unreferenced versions
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Delete untagged versions that nothing references
+        uses: actions/github-script@60a0d83039c74a4aa543e0ccb8f2e7d1eaeeb1cf # v7
+        env:
+          PACKAGE: opencode-manager-devcontainer
+          # Scheduled runs delete; manual runs default to a dry run so the
+          # effect can be reviewed before anything is removed.
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || 'false' }}
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const pkg = process.env.PACKAGE;
+            const org = context.repo.owner;
+            const dryRun = process.env.DRY_RUN === 'true';
+
+            // Every multi-arch tag is an index that references per-platform
+            // manifests, and those manifests carry no tag of their own. Deleting
+            // untagged versions indiscriminately would therefore destroy the
+            // platform layers out from under the tags, including the immutable
+            // ones. So first walk every tagged index and collect the digests it
+            // points at; only versions outside that set may be removed.
+            const versions = await github.paginate(
+              github.rest.packages.getAllPackageVersionsForPackageOwnedByOrg,
+              { package_type: 'container', package_name: pkg, org, per_page: 100 },
+            );
+            core.info(`Found ${versions.length} package versions.`);
+
+            const tagged = versions.filter(v => (v.metadata?.container?.tags ?? []).length > 0);
+            const untagged = versions.filter(v => (v.metadata?.container?.tags ?? []).length === 0);
+            core.info(`${tagged.length} tagged, ${untagged.length} untagged.`);
+
+            // Read the manifests through the registry API. A token scoped to
+            // pull is required even for public packages.
+            const tokenRes = await fetch(
+              `https://ghcr.io/token?scope=repository:${org}/${pkg}:pull&service=ghcr.io`,
+            );
+            if (!tokenRes.ok) {
+              throw new Error(`Could not obtain a registry token: ${tokenRes.status}`);
+            }
+            const { token } = await tokenRes.json();
+
+            const accept = [
+              'application/vnd.oci.image.index.v1+json',
+              'application/vnd.docker.distribution.manifest.list.v2+json',
+              'application/vnd.oci.image.manifest.v1+json',
+              'application/vnd.docker.distribution.manifest.v2+json',
+            ].join(',');
+
+            const referenced = new Set();
+            for (const v of tagged) {
+              const res = await fetch(
+                `https://ghcr.io/v2/${org}/${pkg}/manifests/${v.name}`,
+                { headers: { Authorization: `Bearer ${token}`, Accept: accept } },
+              );
+              if (!res.ok) {
+                // Refuse to guess. Deleting while the reference graph is only
+                // partially known is how tags get broken.
+                throw new Error(`Could not read manifest ${v.name}: ${res.status}`);
+              }
+              const body = await res.json();
+              for (const m of body.manifests ?? []) {
+                referenced.add(m.digest);
+                // Attestation manifests point at their subject via annotations.
+                const ref = m.annotations?.['vnd.docker.reference.digest'];
+                if (ref) referenced.add(ref);
+              }
+            }
+            core.info(`${referenced.size} digests are referenced by a tagged index.`);
+
+            const deletable = untagged.filter(v => !referenced.has(v.name));
+            const protectedCount = untagged.length - deletable.length;
+            core.info(`${protectedCount} untagged versions are referenced and will be kept.`);
+            core.info(`${deletable.length} untagged versions are unreferenced.`);
+
+            // A run that would delete everything means the reference graph was
+            // not read correctly; stop rather than gut the package.
+            if (untagged.length > 0 && protectedCount === 0 && tagged.length > 0) {
+              throw new Error(
+                'No untagged version appears referenced, which is implausible. Aborting.',
+              );
+            }
+
+            const summary = [
+              '### Untagged image cleanup',
+              '',
+              `Mode: ${dryRun ? '**dry run**' : 'delete'}`,
+              '',
+              `| Metric | Count |`,
+              `| --- | --- |`,
+              `| Total versions | ${versions.length} |`,
+              `| Tagged | ${tagged.length} |`,
+              `| Untagged, referenced (kept) | ${protectedCount} |`,
+              `| Untagged, unreferenced | ${deletable.length} |`,
+            ];
+
+            let deleted = 0;
+            for (const v of deletable) {
+              if (dryRun) {
+                core.info(`Would delete ${v.name}`);
+                continue;
+              }
+              try {
+                await github.rest.packages.deletePackageVersionForOrg({
+                  package_type: 'container', package_name: pkg, org, package_version_id: v.id,
+                });
+                deleted += 1;
+              } catch (err) {
+                core.warning(`Could not delete ${v.name}: ${err.message}`);
+              }
+            }
+
+            summary.push('', dryRun
+              ? '_Dry run: nothing was deleted._'
+              : `Deleted ${deleted} version(s).`);
+            await core.summary.addRaw(summary.join('\n')).write();

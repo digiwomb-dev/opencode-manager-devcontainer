@@ -13,7 +13,7 @@ The image can be used in a `docker-compose.yml` as follows:
 ```yaml
 services:
   opencode-manager:
-    image: ghcr.io/digiwomb-dev/opencode-manager-devcontainer:0.18.0-b15
+    image: ghcr.io/digiwomb-dev/opencode-manager-devcontainer:1.0.17
     security_opt:
       - unmask=ALL
       - seccomp=unconfined
@@ -26,21 +26,37 @@ services:
 
 ### Image tags
 
-The upstream version alone does not identify a build of this image, because this
-repository adds its own package pins on top. Several different builds can share
-one upstream version, so a tag like `0.18.0` cannot stay fixed.
+This image has its own SemVer line, independent of the upstream base image
+version. The upstream version cannot identify a build here, because this
+repository adds its own package pins on top, so several different builds would
+share one upstream version.
+
+`MAJOR.MINOR` comes from the `VERSION` file and is bumped by hand. `PATCH` is the
+commit count, so every commit yields a distinct, correctly sorting version.
 
 | Tag | Example | Stability |
 | --- | --- | --- |
-| `<version>-b<build>` | `0.18.0-b15` | **Immutable.** Never reassigned. Use this to pin. |
-| `sha-<commit>` | `sha-9e57ae4…` | **Immutable.** Same image, addressed by commit. |
-| `<version>` | `0.18.0` | Moving. Latest build for that upstream version. |
+| `<major>.<minor>.<patch>` | `1.0.17` | **Immutable.** Never reassigned. Use this to pin. |
+| `sha-<commit>` | `sha-1f0dc1e…` | **Immutable.** Same image, addressed by commit. |
+| `<major>.<minor>` | `1.0` | Moving. Latest patch of that minor line. |
+| `<major>` | `1` | Moving. Latest release of that major line. |
 | `latest` | `latest` | Moving. Latest build overall. |
 
 Pin an immutable tag for anything you depend on. The moving tags are convenience
 pointers and will silently change underneath you when a new build is published.
 If you want byte-exact reproducibility, pin the digest (`@sha256:…`), which the
 immutable tags resolve to anyway.
+
+The upstream release an image was built on is recorded in its
+`org.opencontainers.image.base.name` label:
+
+```bash
+docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.base.name"}}' \
+  ghcr.io/digiwomb-dev/opencode-manager-devcontainer:1.0.17
+```
+
+Older builds used `<upstream>-b<build>` tags such as `0.18.0-b16`. Those remain
+valid and immutable, but new builds use the scheme above.
 
 ### Why these compose options are required
 
