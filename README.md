@@ -13,7 +13,7 @@ The image can be used in a `docker-compose.yml` as follows:
 ```yaml
 services:
   opencode-manager:
-    image: ghcr.io/digiwomb-dev/opencode-manager-devcontainer:0.18.0
+    image: ghcr.io/digiwomb-dev/opencode-manager-devcontainer:0.18.0-b14
     security_opt:
       - unmask=ALL
       - seccomp=unconfined
@@ -23,6 +23,24 @@ services:
     volumes:
       - opencode-containers:/home/node/.local/share/containers
 ```
+
+### Image tags
+
+The upstream version alone does not identify a build of this image, because this
+repository adds its own package pins on top. Several different builds can share
+one upstream version, so a tag like `0.18.0` cannot stay fixed.
+
+| Tag | Example | Stability |
+| --- | --- | --- |
+| `<version>-b<build>` | `0.18.0-b14` | **Immutable.** Never reassigned. Use this to pin. |
+| `sha-<commit>` | `sha-417040d…` | **Immutable.** Same image, addressed by commit. |
+| `<version>` | `0.18.0` | Moving. Latest build for that upstream version. |
+| `latest` | `latest` | Moving. Latest build overall. |
+
+Pin an immutable tag for anything you depend on. The moving tags are convenience
+pointers and will silently change underneath you when a new build is published.
+If you want byte-exact reproducibility, pin the digest (`@sha256:…`), which the
+immutable tags resolve to anyway.
 
 ### Why these compose options are required
 

@@ -95,20 +95,47 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
 
-      - name: Derive image tag from base image
+      - name: Derive image tags
         id: tag
+        env:
+          SHA: ${{ github.sha }}
         run: |
-          # Derive the published tag from the pinned base image tag so that a
+          # Derive the release line from the pinned base image tag so that a
           # Renovate base image bump also moves the tag we publish under,
           # instead of silently republishing an old version number.
-          TAG=$(sed -n 's|^FROM .*/opencode-manager:\([^@[:space:]]*\).*|\1|p' Dockerfile)
-          if [ -z "$TAG" ]; then
+          BASE=$(sed -n 's|^FROM .*/opencode-manager:\([^@[:space:]]*\).*|\1|p' Dockerfile)
+          if [ -z "$BASE" ]; then
             echo "::error::Could not derive tag from base image in Dockerfile" >&2
             exit 1
           fi
-          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-          echo "Publishing as $TAG"
+
+          # The base version alone is not a unique identity for this image: this
+          # repository adds its own package pins on top, so several different
+          # builds can share one base version. Append the commit count, which is
+          # strictly monotonic over the history and therefore unique per commit,
+          # even across a rollback to a previously used base version. This yields
+          # a tag that is never reused and can be pinned safely.
+          BUILD=$(git rev-list --count HEAD)
+          IMMUTABLE="${BASE}-b${BUILD}"
+
+          {
+            echo "base=$BASE"
+            echo "immutable=$IMMUTABLE"
+            echo "sha=sha-${SHA}"
+          } >> "$GITHUB_OUTPUT"
+
+          echo "Immutable: $IMMUTABLE / sha-${SHA}"
+          echo "Moving:    $BASE, latest"
+
+      - name: Log in to the Container registry
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Setup Docker Buildx
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
@@ -120,19 +147,66 @@ jobs:
           pattern: digests-*
           merge-multiple: true
 
-      - name: Log in to the Container registry
-        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-          
+      - name: Verify immutable tag is not taken by a different commit
+        env:
+          IMMUTABLE: ${{ steps.tag.outputs.immutable }}
+          SHA_TAG: ${{ steps.tag.outputs.sha }}
+        run: |
+          # An immutable tag is only a guarantee if it never points at a
+          # different commit's build. Every build also publishes a sha-<commit>
+          # tag, so if the revision tag already exists we can tell the two cases
+          # apart: pointing at the same content as this commit's sha tag means a
+          # workflow re-run, which is safe to repeat. Anything else means the
+          # revision number got reused by a different commit, which would break
+          # whoever already pinned it.
+          IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}"
+          existing=$(docker buildx imagetools inspect --raw "${IMAGE}:${IMMUTABLE}" 2>/dev/null \
+            | sha256sum | cut -d' ' -f1) || existing=""
+          if [ -z "$existing" ]; then
+            echo "Tag ${IMMUTABLE} is free."
+            exit 0
+          fi
+          mine=$(docker buildx imagetools inspect --raw "${IMAGE}:${SHA_TAG}" 2>/dev/null \
+            | sha256sum | cut -d' ' -f1) || mine=""
+          if [ -n "$mine" ] && [ "$existing" = "$mine" ]; then
+            echo "Tag ${IMMUTABLE} already points at this commit's build; re-run is safe."
+          else
+            echo "::error::Tag ${IMMUTABLE} already exists for a different commit." >&2
+            echo "::error::Refusing to overwrite an immutable tag. This usually means" >&2
+            echo "::error::the history was rewritten, so the revision number repeated." >&2
+            exit 1
+          fi
+
       - name: Create manifest list and push
         working-directory: /tmp/digests
         env:
-          TAG: ${{ steps.tag.outputs.tag }}
+          BASE: ${{ steps.tag.outputs.base }}
+          IMMUTABLE: ${{ steps.tag.outputs.immutable }}
+          SHA_TAG: ${{ steps.tag.outputs.sha }}
         run: |
+          # The first two tags are immutable and safe to pin; the last two are
+          # moving pointers to the newest build of this release line.
           docker buildx imagetools create \
-            -t "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${TAG}" \
+            -t "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${IMMUTABLE}" \
+            -t "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${SHA_TAG}" \
+            -t "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${BASE}" \
             -t "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest" \
             $(printf '${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@sha256:%s ' *)
+
+      - name: Summarise published tags
+        env:
+          BASE: ${{ steps.tag.outputs.base }}
+          IMMUTABLE: ${{ steps.tag.outputs.immutable }}
+          SHA_TAG: ${{ steps.tag.outputs.sha }}
+        run: |
+          IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}"
+          {
+            echo "### Published tags"
+            echo
+            echo "| Tag | Stability |"
+            echo "| --- | --- |"
+            echo "| \`${IMAGE}:${IMMUTABLE}\` | immutable, safe to pin |"
+            echo "| \`${IMAGE}:${SHA_TAG}\` | immutable, safe to pin |"
+            echo "| \`${IMAGE}:${BASE}\` | moving |"
+            echo "| \`${IMAGE}:latest\` | moving |"
+          } >> "$GITHUB_STEP_SUMMARY"
