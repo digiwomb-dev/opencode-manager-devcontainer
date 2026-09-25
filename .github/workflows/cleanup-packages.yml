@@ -23,10 +23,38 @@ jobs:
     name: Delete unreferenced versions
     runs-on: ubuntu-24.04
     permissions:
+      actions: read
       contents: read
       packages: write
 
     steps:
+      - name: Wait for in-flight builds
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            // A build publishes its per-platform images by digest and only tags
+            // them in a later job. Between those steps the images look like
+            // orphans, so deleting concurrently would pull them out from under
+            // the build and it would fail to assemble its manifest list.
+            const { owner, repo } = context.repo;
+            for (let i = 0; i < 30; i += 1) {
+              const runs = [];
+              for (const status of ['in_progress', 'queued']) {
+                const res = await github.rest.actions.listWorkflowRunsForRepo({
+                  owner, repo, status, per_page: 100,
+                });
+                runs.push(...res.data.workflow_runs.filter(r => r.name === 'Build and Publish'));
+              }
+              if (runs.length === 0) {
+                core.info('No build in flight.');
+                return;
+              }
+              core.info(`Waiting for ${runs.length} build run(s) to finish...`);
+              await new Promise(r => setTimeout(r, 20000));
+            }
+            core.setFailed('A build is still running after 10 minutes; not deleting anything.');
+
       - name: Delete untagged versions that nothing references
         uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
         env:

@@ -160,6 +160,29 @@ jobs:
           pattern: digests-*
           merge-multiple: true
 
+      - name: Verify the built images are still present
+        working-directory: /tmp/digests
+        run: |
+          # The per-platform images are pushed by digest and carry no tag until
+          # the manifest list below is created, so a concurrent cleanup can
+          # delete them in between. Check them here to fail with a clear message
+          # instead of an opaque "not found" from imagetools.
+          IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}"
+          missing=0
+          for d in *; do
+            if docker buildx imagetools inspect --raw "${IMAGE}@sha256:${d}" >/dev/null 2>&1; then
+              echo "present: ${d}"
+            else
+              echo "::error::Image ${d} is gone from the registry." >&2
+              missing=1
+            fi
+          done
+          if [ "$missing" -ne 0 ]; then
+            echo "::error::Built images disappeared before they could be tagged." >&2
+            echo "::error::A cleanup most likely ran concurrently. Re-run this build." >&2
+            exit 1
+          fi
+
       - name: Verify immutable tag is not taken by a different commit
         env:
           VERSION: ${{ needs.version.outputs.version }}
