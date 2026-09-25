@@ -13,7 +13,7 @@ The image can be used in a `docker-compose.yml` as follows:
 ```yaml
 services:
   opencode-manager:
-    image: ghcr.io/digiwomb-dev/opencode-manager-devcontainer:0.18.0-b14
+    image: ghcr.io/digiwomb-dev/opencode-manager-devcontainer:0.18.0-b15
     security_opt:
       - unmask=ALL
       - seccomp=unconfined
@@ -32,8 +32,8 @@ one upstream version, so a tag like `0.18.0` cannot stay fixed.
 
 | Tag | Example | Stability |
 | --- | --- | --- |
-| `<version>-b<build>` | `0.18.0-b14` | **Immutable.** Never reassigned. Use this to pin. |
-| `sha-<commit>` | `sha-417040d…` | **Immutable.** Same image, addressed by commit. |
+| `<version>-b<build>` | `0.18.0-b15` | **Immutable.** Never reassigned. Use this to pin. |
+| `sha-<commit>` | `sha-9e57ae4…` | **Immutable.** Same image, addressed by commit. |
 | `<version>` | `0.18.0` | Moving. Latest build for that upstream version. |
 | `latest` | `latest` | Moving. Latest build overall. |
 
