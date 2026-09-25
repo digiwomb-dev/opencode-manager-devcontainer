@@ -36,3 +36,4 @@ RUN npm install -g @devcontainers/cli@0.89.0
 # Configure Podman
 COPY containers.conf /etc/containers/containers.conf
 COPY storage.conf /etc/containers/storage.conf
+COPY registries.conf /etc/containers/registries.conf

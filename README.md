@@ -54,4 +54,10 @@ To guarantee stable and reproducible container builds, all installed Debian pack
 A secondary `apt` source (`snapshot.debian.org`) with a defined timestamp (e.g., `20260918T000000Z`) is configured.
 By default, `apt-get` accesses the fast live archive. If a pinned package is no longer available there due to an update, `apt` seamlessly falls back to the snapshot. After the installation, the snapshot source is removed to keep the final image clean.
 
+## Migration Note: Storage Location Change
+
+If you are updating from an earlier version of this image, you will notice that your previously pulled images and container layers are no longer visible to Podman.
+This is expected behavior: The image now explicitly enforces the `rootless_storage_path` to point to the dedicated `/home/node/.local/share/containers` volume, overriding the dynamically set `XDG_DATA_HOME` variable that previously caused layers to be placed within your workspace directory.
+You will need to pull your Dev Container images once again. You can safely delete the old Podman storage directories from your workspace to free up disk space.
+
 
